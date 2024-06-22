@@ -584,6 +584,7 @@ void Input::Default(void)
     //    RPA    Rong Shi added on 2022-04
     //==========================================================
     rpa = false;
+    librpa = false;
     coulomb_type = "full";
 
     //==========================================================
@@ -2225,6 +2226,12 @@ bool Input::Read(const std::string& fn)
         {
             read_bool(ifs, rpa);
             if (rpa)
+                GlobalV::rpa_setorb = true;
+        }
+        else if (strcmp("librpa", word) == 0)
+        {
+            read_bool(ifs, librpa);
+            if (librpa)
                 GlobalV::rpa_setorb = true;
         }
         //----------------------------------------------------------------------------------
@@ -3871,6 +3878,7 @@ void Input::Bcast()
     // RPA
     //-----------------------------------------------------------------------------------
     Parallel_Common::bcast_bool(rpa);
+    Parallel_Common::bcast_bool(librpa);
     Parallel_Common::bcast_bool(GlobalV::rpa_setorb);
 
     //----------------------------------------------------------------------------------

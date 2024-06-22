@@ -58,6 +58,15 @@ template <typename T, typename Tdata> class RPA_LRI
     // void cal_rpa_ions();
     // void cal_rpa_elec(const Local_Orbital_Charge &loc, const Parallel_Orbitals &pv);
 
+    void tran_data_to_librpa(const Parallel_Orbitals& parav,
+        const psi::Psi<T>& psi,
+        const elecstate::ElecState* pelec);
+    void tran_bands(const elecstate::ElecState *pelec);
+    void tran_eigen_vector(const Parallel_Orbitals &parav, const psi::Psi<T>& psi);
+    void tran_struc();
+    void tran_Cs();
+    void tran_coulomb_k();
+
     Tdata Erpa;
 
   private:

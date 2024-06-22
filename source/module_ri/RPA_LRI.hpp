@@ -10,6 +10,7 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include "librpa.h"
 
 template <typename T, typename Tdata> void RPA_LRI<T, Tdata>::init(const MPI_Comm& mpi_comm_in, const K_Vectors& kv_in)
 {
@@ -20,7 +21,7 @@ template <typename T, typename Tdata> void RPA_LRI<T, Tdata>::init(const MPI_Com
     this->abfs = exx_lri_rpa.abfs;
     this->abfs_ccp = exx_lri_rpa.abfs_ccp;
     this->p_kv = &kv_in;
-
+    this->cal_rpa_cv();
     //	this->cv = std::move(exx_lri_rpa.cv);
     //    exx_lri_rpa.cv = exx_lri_rpa.cv;
 }
@@ -92,7 +93,6 @@ void RPA_LRI<T, Tdata>::out_for_RPA(const Parallel_Orbitals& parav,
     this->out_eigen_vector(parav, psi);
     this->out_struc();
 
-    this->cal_rpa_cv();
     std::cout << "rpa_pca_threshold: " << this->info.pca_threshold << std::endl;
     std::cout << "rpa_ccp_rmesh_times: " << this->info.ccp_rmesh_times << std::endl;
     std::cout << "rpa_lcao_exx(Ha): " << std::fixed << std::setprecision(15) << exx_lri_rpa.Eexx / 2.0 << std::endl;
@@ -388,5 +388,238 @@ template <typename T, typename Tdata> void RPA_LRI<T, Tdata>::out_coulomb_k()
 
 // 	// rpa_lri.set_Cs(Cs);
 // }
+
+template <typename T, typename Tdata>
+void RPA_LRI<T,Tdata>::tran_data_to_librpa(const Parallel_Orbitals &parav,
+                                 const psi::Psi<T>& psi,
+                                 const elecstate::ElecState *pelec)
+{
+    ModuleBase::TITLE("DFT_RPA_interface", "tran_data_to_librpa");
+    std::cout << "rpa_pca_threshold: " << this->info.pca_threshold << std::endl;
+    std::cout << "rpa_ccp_rmesh_times: " << this->info.ccp_rmesh_times << std::endl;
+    std::cout << "rpa_lcao_exx(Ha): " << std::fixed << std::setprecision(15) << exx_lri_rpa.Eexx / 2.0 << std::endl;
+    std::cout << "etxc(Ha): " << std::fixed << std::setprecision(15) << pelec->f_en.etxc / 2.0 << std::endl;
+    std::cout << "etot(Ha): " << std::fixed << std::setprecision(15) << pelec->f_en.etot / 2.0 << std::endl;
+    std::cout << "Etot_without_rpa(Ha): " << std::fixed << std::setprecision(15)
+              << (pelec->f_en.etot - pelec->f_en.etxc + exx_lri_rpa.Eexx) / 2.0 << std::endl;
+    printf("IN abacus myid : %d\n",GlobalV::MY_RANK);
+    this->tran_bands(pelec);
+    this->tran_eigen_vector(parav, psi);
+    this->tran_struc();
+    this->tran_Cs();
+    this->tran_coulomb_k();
+    set_librpa_params();
+    printf("Before LibRPA myid : %d\n",GlobalV::MY_RANK);
+    MPI_Barrier(MPI_COMM_WORLD);
+    run_librpa_main(this->mpi_comm);
+
+}
+
+template <typename T, typename Tdata> 
+void RPA_LRI<T, Tdata>::tran_bands(const elecstate::ElecState *pelec)
+{
+    ModuleBase::TITLE("DFT_RPA_interface", "tran_bands");
+    // if (GlobalV::MY_RANK != 0)
+    //     return;
+    const int nks_tot = GlobalV::NSPIN == 2 ? (int)p_kv->get_nks() / 2 : p_kv->get_nks();
+    const int nspin_tmp = GlobalV::NSPIN == 2 ? 2 : 1;
+    set_dimension(GlobalV::NSPIN,nks_tot,GlobalV::NBANDS,GlobalV::NLOCAL,GlobalC::ucell.nat);
+    ModuleBase::matrix ekb_Ha= pelec->ekb* 0.5;
+    ModuleBase::matrix wg_nks= pelec->wg*  nks_tot;
+    set_wg_ekb_efermi(GlobalV::NSPIN,nks_tot,GlobalV::NBANDS,wg_nks.c, ekb_Ha.c, pelec->eferm.ef / 2.0 );
+    printf("tran_band myid : %d\n",GlobalV::MY_RANK);
+    return;
+}
+
+template <typename T, typename Tdata>
+void RPA_LRI<T, Tdata>::tran_eigen_vector(const Parallel_Orbitals &parav, const psi::Psi<T>& psi)
+{
+
+    ModuleBase::TITLE("DFT_RPA_interface", "out_eigen_vector");
+
+    const int nks_tot = GlobalV::NSPIN == 2 ? p_kv->get_nks() / 2 : p_kv->get_nks();
+    const int npsin_tmp = GlobalV::NSPIN == 2 ? 2 : 1;
+    const std::complex<double> zero(0.0, 0.0);
+
+    for (int ik = 0; ik < nks_tot; ik++)
+    {
+        std::vector<ModuleBase::ComplexMatrix> is_wfc_ib_iw(npsin_tmp);
+        for (int is = 0; is < npsin_tmp; is++)
+        {
+            is_wfc_ib_iw[is].create(GlobalV::NBANDS, GlobalV::NLOCAL);
+            for (int ib_global = 0; ib_global < GlobalV::NBANDS; ++ib_global)
+            {
+                std::vector<std::complex<double>> wfc_iks(GlobalV::NLOCAL, zero);
+
+                const int ib_local = parav.global2local_col(ib_global);
+
+                if (ib_local >= 0)
+                    for (int ir = 0; ir < psi.get_nbasis(); ir++)
+                        wfc_iks[parav.local2global_row(ir)] = psi(ik + nks_tot * is, ib_local, ir);
+
+                std::vector<std::complex<double>> tmp = wfc_iks;
+#ifdef __MPI
+                MPI_Allreduce(&tmp[0], &wfc_iks[0], GlobalV::NLOCAL, MPI_DOUBLE_COMPLEX, MPI_SUM, MPI_COMM_WORLD);
+#endif
+                for (int iw = 0; iw < GlobalV::NLOCAL; iw++)
+                    is_wfc_ib_iw[is](ib_global, iw) = wfc_iks[iw];
+            } // ib
+            ModuleBase::matrix wfc_real=is_wfc_ib_iw[is].real();
+            ModuleBase::matrix wfc_imag(GlobalV::NBANDS,GlobalV::NLOCAL);
+            for(int i=0;i!=is_wfc_ib_iw[is].size;i++)
+                wfc_imag.c[i]=is_wfc_ib_iw[is].c[i].imag();
+            
+            set_ao_basis_wfc(is,ik, wfc_real.c, wfc_imag.c);
+        } // is
+    } // ik
+    printf("tran_eigenvector : %d\n",GlobalV::MY_RANK);
+    return;
+}
+
+template <typename T, typename Tdata> 
+void RPA_LRI<T, Tdata>::tran_struc()
+{
+    // if (GlobalV::MY_RANK != 0)
+    //     return;
+    ModuleBase::TITLE("DFT_RPA_interface", "out_struc");
+    double TWOPI_Bohr2A = ModuleBase::TWO_PI * ModuleBase::BOHR_TO_A;
+    const int nks_tot = GlobalV::NSPIN == 2 ? (int)p_kv->get_nks() / 2 : p_kv->get_nks();
+    ModuleBase::Matrix3 lat = GlobalC::ucell.latvec / ModuleBase::BOHR_TO_A;
+    ModuleBase::Matrix3 G = GlobalC::ucell.G * TWOPI_Bohr2A;
+   
+    ModuleBase::matrix lat_mat=lat.to_matrix();
+    ModuleBase::matrix G_mat=G.to_matrix();
+    
+    set_latvec_and_G( lat_mat.c, G_mat.c);
+    
+    ModuleBase::matrix kvec_mat(nks_tot,3);
+    vector<int> irk_list;
+    vector<double> irk_weight;
+    for (int ik = 0; ik != nks_tot; ik++)
+    {
+        // need to change the irk_list to real ibz_index!
+        irk_list.push_back(ik);
+        irk_weight.push_back(1.0/nks_tot);
+        kvec_mat(ik,0)=p_kv->kvec_c[ik].x* TWOPI_Bohr2A;
+        kvec_mat(ik,1)=p_kv->kvec_c[ik].y* TWOPI_Bohr2A;
+        kvec_mat(ik,2)=p_kv->kvec_c[ik].z* TWOPI_Bohr2A;
+    }
+    // for(int i=0 ;i!=kvec_mat.nr* kvec_mat.nc;i++)
+    //     std::cout<<kvec_mat.c[i]<<"   ";
+    //std::cout<<"abacus nkstot_ibz"<<p_kv->nkstot_ibz<<std::endl;
+    set_kgrids_kvec_tot(p_kv->nmp[0],p_kv->nmp[1],p_kv->nmp[2], kvec_mat.c);
+    set_ibz2bz_index_and_weight(nks_tot,irk_list.data(),irk_weight.data());
+    printf("tran_stru myid : %d\n",GlobalV::MY_RANK);
+    return;
+}
+
+template <typename T, typename Tdata> 
+void RPA_LRI<T, Tdata>::tran_Cs()
+{
+    
+    for (auto &Ip: this->Cs_period)
+    {
+        size_t I = Ip.first;
+        size_t i_num = GlobalC::ucell.atoms[GlobalC::ucell.iat2it[I]].nw;
+        for (auto &JPp: Ip.second)
+        {
+            size_t J = JPp.first.first;
+            auto R = JPp.first.second;
+            auto &tmp_Cs = JPp.second;
+            size_t j_num = GlobalC::ucell.atoms[GlobalC::ucell.iat2it[J]].nw;
+
+#ifdef __MKL_RI
+			const RI::Tensor<Tdata> Cs_sub = RI::Blas_Interface::omatcopy(
+				'T', Tdata{1.0},
+				tmp_Cs.reshape({tmp_Cs.shape[0],tmp_Cs.shape[1]*tmp_Cs.shape[2]}));
+#else
+            std::size_t Ndim12=tmp_Cs.shape[1]*tmp_Cs.shape[2];
+			RI::Tensor<Tdata> Cs_sub({Ndim12,tmp_Cs.shape[0]});
+
+			std::vector<Tdata*> Cs_sub_ptr(Ndim12);
+			for(int i12=0; i12<Ndim12; ++i12)
+				Cs_sub_ptr[i12] = Cs_sub.ptr()+i12*Cs_sub.shape[1]-1;
+
+			const Tdata* Cs_ptr = tmp_Cs.ptr()-1;
+			for(std::size_t i0=0; i0<Cs_sub.shape[1]; ++i0)
+				for(std::size_t i12=0; i12<Ndim12; ++i12)
+					*(++Cs_sub_ptr[i12]) = *(++Cs_ptr);
+#endif
+            std::cout<<"In tran_Cs: I J: "<<I<<J<<std::endl;
+            set_ao_basis_aux(I, J, i_num, j_num, tmp_Cs.shape[0], R.data(), Cs_sub.ptr());
+            std::cout<<"end set_ao_basis_aux!"<<std::endl;
+        }
+    }
+    printf("tran_Cs myid : %d\n",GlobalV::MY_RANK);
+    return;
+}
+
+template <typename T, typename Tdata> 
+void RPA_LRI<T, Tdata>::tran_coulomb_k()
+{
+    int all_mu = 0;
+    vector<int> mu_shift(GlobalC::ucell.nat);
+    for (int I = 0; I != GlobalC::ucell.nat; I++)
+    {
+        mu_shift[I] = all_mu;
+        all_mu += exx_lri_rpa.cv.get_index_abfs_size(GlobalC::ucell.iat2it[I]);
+    }
+    const int nks_tot = GlobalV::NSPIN == 2 ? (int)p_kv->get_nks() / 2 : p_kv->get_nks();
+    
+    for (auto &Ip: this->Vs_period)
+    {
+        auto I = Ip.first;
+        size_t mu_num = exx_lri_rpa.cv.get_index_abfs_size(GlobalC::ucell.iat2it[I]);
+
+        for (int ik = 0; ik != nks_tot; ik++)
+        {
+            std::map<size_t, RI::Tensor<std::complex<double>>> Vq_k_IJ;
+            for (auto &JPp: Ip.second)
+            {
+                auto J = JPp.first.first;
+
+                auto R = JPp.first.second;
+                if (J < I)
+                    continue;
+                RI::Tensor<std::complex<double>> tmp_VR = RI::Global_Func::convert<std::complex<double>>(JPp.second);
+
+                const double arg = 1
+                                   * (p_kv->kvec_c[ik] * (RI_Util::array3_to_Vector3(R) * GlobalC::ucell.latvec))
+                                   * ModuleBase::TWO_PI; // latvec
+                const std::complex<double> kphase = std::complex<double>(cos(arg), sin(arg));
+                if (Vq_k_IJ[J].empty())
+                    Vq_k_IJ[J] = RI::Tensor<std::complex<double>>({tmp_VR.shape[0], tmp_VR.shape[1]});
+                Vq_k_IJ[J] = Vq_k_IJ[J] + tmp_VR * kphase;
+            }
+            for (auto &vq_Jp: Vq_k_IJ)
+            {
+                auto iJ = vq_Jp.first;
+                auto &vq_J = vq_Jp.second;
+                size_t nu_num = exx_lri_rpa.cv.get_index_abfs_size(GlobalC::ucell.iat2it[iJ]);
+                std::vector<double> vq_real(vq_J.data->size());
+                std::vector<double> vq_imag(vq_J.data->size());
+                //std::cout<<"  In tran_Vq: mu, nu, vq_size:  "<<mu_num<<"  "<<nu_num<<"  "<<vq_J.data->size()<<std::endl;
+                for (int i = 0; i != vq_J.data->size(); i++)
+                {
+                    vq_real[i] = (*vq_J.data)[i].real();
+                    vq_imag[i] = (*vq_J.data)[i].imag();
+                }
+                set_aux_coulomb_k_atom_pair(I, iJ, mu_num, nu_num, ik, vq_real.data(),  vq_imag.data());
+                
+                
+                // ofs << all_mu << "   " << mu_shift[I] + 1 << "   " << mu_shift[I] + mu_num << "  " << mu_shift[iJ] + 1
+                //     << "   " << mu_shift[iJ] + nu_num << std::endl;
+                // ofs << ik + 1 << "  " << p_kv->wk[ik] / 2.0 * GlobalV::NSPIN << std::endl;
+                // for (int i = 0; i != vq_J.data->size(); i++)
+                // {
+                //     ofs << std::setw(21) << std::fixed << std::setprecision(12) << (*vq_J.data)[i].real()
+                //         << std::setw(21) << std::fixed << std::setprecision(12) << (*vq_J.data)[i].imag() << std::endl;
+                // }
+            }
+        }
+    }
+    printf("tran_Vq myid : %d\n",GlobalV::MY_RANK);
+}
+
 
 #endif

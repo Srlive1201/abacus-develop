@@ -1192,7 +1192,7 @@ void ESolver_KS_LCAO<TK, TR>::after_scf(const int istep)
 
 #ifdef __EXX
     // 12) write rpa information
-    if (INPUT.rpa)
+    if (INPUT.rpa || INPUT.librpa)
     {
         // ModuleRPA::DFT_RPA_interface rpa_interface(GlobalC::exx_info.info_global);
         // rpa_interface.rpa_exx_lcao().info.files_abfs = GlobalV::rpa_orbitals;
@@ -1202,7 +1202,11 @@ void ESolver_KS_LCAO<TK, TR>::after_scf(const int istep)
                                        MPI_COMM_WORLD,
                                        this->kv);
         rpa_lri_double.init(MPI_COMM_WORLD, this->kv);
-        rpa_lri_double.out_for_RPA(this->orb_con.ParaV, *(this->psi), this->pelec);
+        if(INPUT.rpa)
+            rpa_lri_double.out_for_RPA(this->orb_con.ParaV, *(this->psi), this->pelec);
+        
+        if(INPUT.librpa)
+            rpa_lri_double.tran_data_to_librpa(this->orb_con.ParaV, *(this->psi), this->pelec);
     }
 #endif
 

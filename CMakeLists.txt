@@ -38,6 +38,7 @@ option(ENABLE_GOOGLEBENCH "Enable GOOGLE-benchmark usage." OFF)
 option(ENABLE_RAPIDJSON "Enable rapid-json usage." OFF)
 option(ENABLE_CNPY "Enable cnpy usage." OFF)
 option(ENABLE_PEXSI "Enable support for PEXSI." OFF)
+option(ENABLE_LIBRPA "Enable compilation with LIBRPA" OFF)
 
 # enable json support
 if(ENABLE_RAPIDJSON)
@@ -245,6 +246,14 @@ if(USE_OPENMP)
   target_link_libraries(${ABACUS_BIN_NAME} OpenMP::OpenMP_CXX)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
   add_link_options(${OpenMP_CXX_LIBRARIES})
+endif()
+
+if(ENABLE_LIBRPA)
+  message(STATUS "CMAKE_MODULE_PATH: ${CMAKE_MODULE_PATH}")
+  find_package(RPA REQUIRED)
+  include_directories(${LIBRPA_DIR})
+  target_link_libraries(${ABACUS_BIN_NAME} RPA::RPA)
+  add_compile_definitions(__RPA)
 endif()
 
 include(CheckLanguage)
