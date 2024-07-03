@@ -646,7 +646,7 @@ void Input_Conv::Convert(void)
         GlobalC::exx_info.info_global.cal_exx = false;
     }
 
-    if (GlobalC::exx_info.info_global.cal_exx || Exx_Abfs::Jle::generate_matrix || INPUT.rpa)
+    if (GlobalC::exx_info.info_global.cal_exx || Exx_Abfs::Jle::generate_matrix || INPUT.rpa || INPUT.librpa)
     {
         // EXX case, convert all EXX related variables
         // GlobalC::exx_info.info_global.cal_exx = true;

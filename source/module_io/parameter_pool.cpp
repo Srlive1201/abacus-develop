@@ -1517,6 +1517,10 @@ void input_parameters_set(std::map<std::string, InputParameter> input_parameters
     {
         INPUT.rpa = *static_cast<bool*>(input_parameters["rpa"].get());
     }
+    else if (input_parameters.count("librpa") != 0)
+    {
+        INPUT.librpa = *static_cast<bool*>(input_parameters["librpa"].get());
+    }
     else if (input_parameters.count("coulomb_type") != 0)
     {
         INPUT.coulomb_type = static_cast<SimpleString*>(input_parameters["coulomb_type"].get())->c_str();
