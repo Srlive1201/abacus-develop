@@ -403,16 +403,23 @@ void RPA_LRI<T,Tdata>::tran_data_to_librpa(const Parallel_Orbitals &parav,
     std::cout << "Etot_without_rpa(Ha): " << std::fixed << std::setprecision(15)
               << (pelec->f_en.etot - pelec->f_en.etxc + exx_lri_rpa.Eexx) / 2.0 << std::endl;
     printf("IN abacus myid : %d\n",GlobalV::MY_RANK);
+    initialize_librpa_environment(this->mpi_comm,0,1,"librpa.out");
     this->tran_bands(pelec);
-    this->tran_eigen_vector(parav, psi);
+    this->tran_eigen_vector(parav, psi); 
     this->tran_struc();
     this->tran_Cs();
     this->tran_coulomb_k();
-    set_librpa_params();
+
+    LibRPAParams rpa_params;
+    strcpy(rpa_params.task, "rpa");
+    strcpy(rpa_params.output_file, "stdout");
+    strcpy(rpa_params.output_dir, "librpa.d");
+    rpa_params.nfreq = 12;
+    set_librpa_params(&rpa_params);
     printf("Before LibRPA myid : %d\n",GlobalV::MY_RANK);
     MPI_Barrier(MPI_COMM_WORLD);
-    run_librpa_main(this->mpi_comm);
-
+    run_librpa_main();
+    finalize_librpa_environment();
 }
 
 template <typename T, typename Tdata> 
@@ -546,7 +553,7 @@ void RPA_LRI<T, Tdata>::tran_Cs()
 					*(++Cs_sub_ptr[i12]) = *(++Cs_ptr);
 #endif
             std::cout<<"In tran_Cs: I J: "<<I<<J<<std::endl;
-            set_ao_basis_aux(I, J, i_num, j_num, tmp_Cs.shape[0], R.data(), Cs_sub.ptr());
+            set_ao_basis_aux(I, J, i_num, j_num, tmp_Cs.shape[0], R.data(), Cs_sub.ptr(),0);
             std::cout<<"end set_ao_basis_aux!"<<std::endl;
         }
     }
@@ -604,7 +611,7 @@ void RPA_LRI<T, Tdata>::tran_coulomb_k()
                     vq_real[i] = (*vq_J.data)[i].real();
                     vq_imag[i] = (*vq_J.data)[i].imag();
                 }
-                set_aux_coulomb_k_atom_pair(I, iJ, mu_num, nu_num, ik, vq_real.data(),  vq_imag.data());
+                set_aux_bare_coulomb_k_atom_pair(ik, I, iJ, mu_num, nu_num,  vq_real.data(),  vq_imag.data());
                 
                 
                 // ofs << all_mu << "   " << mu_shift[I] + 1 << "   " << mu_shift[I] + mu_num << "  " << mu_shift[iJ] + 1
