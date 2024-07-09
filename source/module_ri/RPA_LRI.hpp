@@ -411,10 +411,15 @@ void RPA_LRI<T,Tdata>::tran_data_to_librpa(const Parallel_Orbitals &parav,
     this->tran_coulomb_k();
 
     LibRPAParams rpa_params;
-    strcpy(rpa_params.task, "rpa");
-    strcpy(rpa_params.output_file, "stdout");
-    strcpy(rpa_params.output_dir, "librpa.d");
+    get_default_librpa_params(&rpa_params);
+    // strcpy(rpa_params.task, "rpa");
+    // strcpy(rpa_params.output_file, "stdout");
+    // strcpy(rpa_params.output_dir, "librpa.d");
+    strcpy(rpa_params.DFT_software, "ABACUS");
+    // strcpy(rpa_params.parallel_routing, "auto");
+    // strcpy(rpa_params.tfgrids_type, "minimax");
     rpa_params.nfreq = 12;
+    
     set_librpa_params(&rpa_params);
     printf("Before LibRPA myid : %d\n",GlobalV::MY_RANK);
     MPI_Barrier(MPI_COMM_WORLD);
